@@ -1,0 +1,21 @@
+# Build output
+/build*/
+/out/
+/cmake-build-*/
+
+# Downloaded dependency archives (re-fetched by CMake, pinned by hash)
+/.deps-cache/
+
+# Local tools (pluginval etc.), downloaded per machine
+/tools/
+
+# Install-script backups of the previously installed plugin
+/.install-backup/
+
+# Editors / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+compile_commands.json
+.cache/
