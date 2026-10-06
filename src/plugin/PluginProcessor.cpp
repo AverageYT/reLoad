@@ -2,26 +2,36 @@
 
 #include "plugin/Parameters.h"
 #include "plugin/PluginEditor.h"
+#include "plugin/StateSerialization.h"
 
 namespace reload
 {
+namespace
+{
+    const juce::Identifier stateType ("reLoadState");
+    const juce::Identifier wavetableType ("Wavetable");
+    const juce::Identifier importType ("Import");
+} // namespace
+
 ReloadProcessor::ReloadProcessor()
     : AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
-      parameters (*this, nullptr, "reLoadState", params::createLayout())
+      parameters (*this, nullptr, stateType, params::createLayout())
 {
-    parameters.state.setProperty ("stateVersion", stateVersion, nullptr);
-
     masterGainDb = parameters.getRawParameterValue (params::id::masterGain);
     ampAttack = parameters.getRawParameterValue (params::id::ampAttack);
     ampDecay = parameters.getRawParameterValue (params::id::ampDecay);
     ampSustain = parameters.getRawParameterValue (params::id::ampSustain);
     ampRelease = parameters.getRawParameterValue (params::id::ampRelease);
+    sourceTuning = parameters.getRawParameterValue (params::id::sourceTuning);
 
+    setWavetable (dsp::Wavetable::createSine());
     keyboardState.addListener (this);
+    startTimerHz (4); // frees wavetables retired by the audio thread
 }
 
 ReloadProcessor::~ReloadProcessor()
 {
+    stopTimer();
     keyboardState.removeListener (this);
 }
 
@@ -47,6 +57,8 @@ void ReloadProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
 {
     juce::ScopedNoDenormals noDenormals;
 
+    engine.setWavetable (tableExchange.acquire());
+    engine.setSourceTuning (sourceTuning->load() >= 0.5f);
     engine.setAmpEnvelope ({ ampAttack->load(), ampDecay->load(), ampSustain->load(), ampRelease->load() });
 
     injectedMidi.drain ([this] (const MidiInjectionFifo::Event& e) {
@@ -64,22 +76,54 @@ juce::AudioProcessorEditor* ReloadProcessor::createEditor()
     return new ReloadEditor (*this);
 }
 
+std::shared_ptr<const dsp::Wavetable> ReloadProcessor::getWavetable() const
+{
+    const juce::ScopedLock sl (tableLock);
+    return wavetable;
+}
+
+void ReloadProcessor::setWavetable (std::shared_ptr<const dsp::Wavetable> table)
+{
+    if (table == nullptr)
+        return;
+    {
+        const juce::ScopedLock sl (tableLock);
+        wavetable = table;
+    }
+    tableExchange.publish (std::move (table));
+}
+
+void ReloadProcessor::timerCallback()
+{
+    tableExchange.collectGarbage();
+}
+
 void ReloadProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
-    const auto state = parameters.copyState();
-    if (const auto xml = state.createXml())
-        copyXmlToBinary (*xml, destData);
+    auto state = parameters.copyState();
+    state.setProperty ("stateVersion", stateVersion, nullptr);
+    state.appendChild (importer.toValueTree(), nullptr);
+    if (const auto table = getWavetable())
+        state.appendChild (state::wavetableToValueTree (*table), nullptr);
+
+    state::writeState (state, destData);
 }
 
 void ReloadProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
-    const auto xml = getXmlFromBinary (data, sizeInBytes);
-    if (xml == nullptr || ! xml->hasTagName (parameters.state.getType()))
+    auto state = state::readState (data, sizeInBytes);
+    if (! state.isValid() || ! state.hasType (stateType))
         return;
 
-    auto state = juce::ValueTree::fromXml (*xml);
-    state.setProperty ("stateVersion", stateVersion, nullptr);
+    const auto tableTree = state.getChildWithName (wavetableType);
+    const auto importTree = state.getChildWithName (importType);
+    state.removeChild (tableTree, nullptr);
+    state.removeChild (importTree, nullptr);
     parameters.replaceState (state);
+
+    auto table = state::wavetableFromValueTree (tableTree);
+    setWavetable (table != nullptr ? std::move (table) : dsp::Wavetable::createSine());
+    importer.restoreFromValueTree (importTree);
 }
 
 void ReloadProcessor::handleNoteOn (juce::MidiKeyboardState*, int midiChannel, int note, float velocity)

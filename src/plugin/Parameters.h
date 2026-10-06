@@ -13,6 +13,7 @@ namespace id
     inline constexpr const char* ampDecay   = "ampDecay";
     inline constexpr const char* ampSustain = "ampSustain";
     inline constexpr const char* ampRelease = "ampRelease";
+    inline constexpr const char* sourceTuning = "sourceTuning";
 } // namespace id
 
 // Version hint for parameters introduced in this release (used by AU/VST3).

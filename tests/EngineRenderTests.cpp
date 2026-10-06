@@ -10,11 +10,18 @@ using Catch::Matchers::WithinRel;
 
 namespace
 {
+const dsp::Wavetable* sineTable()
+{
+    static const auto table = dsp::Wavetable::createSine();
+    return table.get();
+}
+
 dsp::SynthEngine makeEngine (double sampleRate, int blockSize, juce::ADSR::Parameters env = { 0.005f, 0.2f, 0.8f, 0.3f })
 {
     dsp::SynthEngine engine;
     engine.prepare (sampleRate, blockSize);
     engine.setAmpEnvelope (env);
+    engine.setWavetable (sineTable());
     return engine;
 }
 } // namespace

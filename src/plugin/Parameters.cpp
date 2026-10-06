@@ -66,6 +66,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
 
     layout.add (makeTime (id::ampRelease, "Amp Release", 0.3f));
 
+    // On: the root key plays the source's exact pitch (including any cents
+    // offset). Off: snap the table's root to standard A440 tuning.
+    layout.add (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { id::sourceTuning, version }, "Tune to Source", true));
+
     return layout;
 }
 } // namespace reload::params

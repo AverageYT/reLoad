@@ -12,8 +12,8 @@ instrument that made the original sound.
 
 | Milestone | State |
 |---|---|
-| M1: skeleton plugin, sine voice, install script, CI | in progress |
-| M2: file import → single-cycle wavetable at correct pitch | planned |
+| M1: skeleton plugin, sine voice, install script, CI | done |
+| M2: file import → single-cycle wavetable at correct pitch (+ mipmaps) | done |
 | M3: evolving + spectral import, mipmaps, table scanning | planned |
 | M4: full synth engine | planned |
 | M5: GUI pass | planned |

@@ -6,13 +6,7 @@ namespace reload::dsp
 {
 namespace
 {
-    constexpr double twoPi = 6.283185307179586476925286766559;
     constexpr float voiceHeadroom = 0.25f; // ~ -12 dB per voice at full velocity
-
-    double midiNoteToHz (int note) noexcept
-    {
-        return 440.0 * std::exp2 ((note - 69) / 12.0);
-    }
 } // namespace
 
 //==============================================================================
@@ -23,11 +17,23 @@ void Voice::prepare (double newSampleRate)
     kill();
 }
 
-void Voice::start (int midiNote, float velocity, std::uint64_t startOrder) noexcept
+double Voice::noteFrequency (int midiNote, const PitchContext& ctx) noexcept
+{
+    if (ctx.table == nullptr)
+        return 440.0 * std::exp2 ((midiNote - 69) / 12.0);
+
+    const auto& info = ctx.table->getInfo();
+    const double rootHz = ctx.sourceTuning ? info.rootFrequency
+                                           : 440.0 * std::exp2 ((info.rootNote - 69) / 12.0);
+    return rootHz * std::exp2 ((midiNote - info.rootNote) / 12.0);
+}
+
+void Voice::start (int midiNote, float velocity, std::uint64_t startOrder, const PitchContext& ctx) noexcept
 {
     if (! active)
     {
-        // Fresh voice: start the sine at zero so there's no click.
+        // Fresh voice: start at phase 0 (tables are aligned to begin at a
+        // rising zero crossing of the fundamental).
         phase = 0.0;
         amp.reset();
     }
@@ -37,11 +43,19 @@ void Voice::start (int midiNote, float velocity, std::uint64_t startOrder) noexc
     note = midiNote;
     order = startOrder;
     level = velocity * voiceHeadroom;
-    phaseIncrement = midiNoteToHz (midiNote) / sampleRate;
     keyDown = true;
     sustained = false;
     active = true;
+    updatePitch (ctx);
     amp.noteOn();
+}
+
+void Voice::updatePitch (const PitchContext& ctx) noexcept
+{
+    frequency = noteFrequency (note, ctx);
+    // Kept below Nyquist so the phase wrap in render() is always a single subtraction.
+    phaseIncrement = std::min (frequency / sampleRate, 0.49);
+    mipLevel = Wavetable::chooseLevel (frequency, sampleRate);
 }
 
 void Voice::release() noexcept
@@ -60,8 +74,11 @@ void Voice::kill() noexcept
     note = -1;
 }
 
-void Voice::render (float* left, float* right, int numSamples) noexcept
+void Voice::render (const Wavetable& table, float* left, float* right, int numSamples) noexcept
 {
+    const float* mip = table.getMip (0, mipLevel);
+    constexpr double size = Wavetable::frameSize;
+
     for (int i = 0; i < numSamples; ++i)
     {
         if (! amp.isActive())
@@ -70,7 +87,18 @@ void Voice::render (float* left, float* right, int numSamples) noexcept
             return;
         }
 
-        const auto sample = static_cast<float> (std::sin (phase * twoPi)) * level * amp.getNextSample();
+        // 4-point cubic Hermite: far lower interpolation images than linear
+        // on the harmonic-rich low mip levels.
+        const double pos = phase * size;
+        const int index = static_cast<int> (pos);
+        const float t = static_cast<float> (pos - index);
+        const float xm1 = mip[index - 1], x0 = mip[index], x1 = mip[index + 1], x2 = mip[index + 2];
+        const float c1 = 0.5f * (x1 - xm1);
+        const float c2 = xm1 - 2.5f * x0 + 2.0f * x1 - 0.5f * x2;
+        const float c3 = 0.5f * (x2 - xm1) + 1.5f * (x0 - x1);
+        const float osc = ((c3 * t + c2) * t + c1) * t + x0;
+
+        const float sample = osc * level * amp.getNextSample();
         left[i] += sample;
         if (right != left)
             right[i] += sample;
@@ -87,6 +115,7 @@ void Voice::render (float* left, float* right, int numSamples) noexcept
 //==============================================================================
 void SynthEngine::prepare (double sampleRate, int /*maxBlockSize*/)
 {
+    pitch.sampleRate = sampleRate;
     for (auto& v : voices)
         v.prepare (sampleRate);
     sustainPedalDown = false;
@@ -103,6 +132,26 @@ void SynthEngine::setAmpEnvelope (const juce::ADSR::Parameters& p) noexcept
 {
     for (auto& v : voices)
         v.setAmpEnvelope (p);
+}
+
+void SynthEngine::setWavetable (const Wavetable* table) noexcept
+{
+    if (table == pitch.table)
+        return;
+    pitch.table = table;
+    for (auto& v : voices)
+        if (v.isActive())
+            v.updatePitch (pitch);
+}
+
+void SynthEngine::setSourceTuning (bool enabled) noexcept
+{
+    if (enabled == pitch.sourceTuning)
+        return;
+    pitch.sourceTuning = enabled;
+    for (auto& v : voices)
+        if (v.isActive())
+            v.updatePitch (pitch);
 }
 
 int SynthEngine::getNumActiveVoices() const noexcept
@@ -174,7 +223,7 @@ void SynthEngine::handleMidi (const std::uint8_t* data, int numBytes) noexcept
 
 void SynthEngine::noteOn (int note, float velocity) noexcept
 {
-    chooseVoice (note).start (note, velocity, ++noteCounter);
+    chooseVoice (note).start (note, velocity, ++noteCounter, pitch);
 }
 
 void SynthEngine::noteOff (int note) noexcept
@@ -242,7 +291,7 @@ Voice& SynthEngine::chooseVoice (int note) noexcept
 
 void SynthEngine::render (juce::AudioBuffer<float>& buffer, int start, int numSamples) noexcept
 {
-    if (buffer.getNumChannels() == 0)
+    if (buffer.getNumChannels() == 0 || pitch.table == nullptr)
         return;
 
     auto* left = buffer.getWritePointer (0, start);
@@ -250,6 +299,6 @@ void SynthEngine::render (juce::AudioBuffer<float>& buffer, int start, int numSa
 
     for (auto& v : voices)
         if (v.isActive())
-            v.render (left, right, numSamples);
+            v.render (*pitch.table, left, right, numSamples);
 }
 } // namespace reload::dsp

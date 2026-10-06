@@ -55,17 +55,30 @@ juce_add_plugin(reLoad
     DESCRIPTION "Wavetable synth that rebuilds recorded sounds as wavetables")
 
 target_sources(reLoad PRIVATE
-    src/plugin/PluginProcessor.cpp
-    src/plugin/PluginEditor.cpp
+    src/analysis/Analyzer.cpp
+    src/analysis/NoteUtils.cpp
+    src/analysis/SingleCycle.cpp
+    src/analysis/Yin.cpp
+    src/dsp/SynthEngine.cpp
+    src/dsp/Wavetable.cpp
+    src/gui/SourceView.cpp
+    src/plugin/AudioFileLoader.cpp
+    src/plugin/ImportController.cpp
     src/plugin/Parameters.cpp
-    src/dsp/SynthEngine.cpp)
+    src/plugin/PluginEditor.cpp
+    src/plugin/PluginProcessor.cpp
+    src/plugin/StateSerialization.cpp)
 
 target_include_directories(reLoad PUBLIC src)
 
 target_compile_definitions(reLoad PUBLIC
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
-    JUCE_VST3_CAN_REPLACE_VST2=0)
+    JUCE_VST3_CAN_REPLACE_VST2=0
+    # Sample import decoders (MP3 is off by default in JUCE).
+    JUCE_USE_MP3AUDIOFORMAT=1
+    JUCE_USE_FLAC=1
+    JUCE_USE_OGGVORBIS=1)
 
 target_link_libraries(reLoad
     PRIVATE
@@ -88,8 +101,12 @@ if(RELOAD_BUILD_TESTS)
     FetchContent_MakeAvailable(Catch2)
 
     add_executable(reload_tests
+        tests/AnalysisTests.cpp
         tests/EngineRenderTests.cpp
-        tests/ProcessorTests.cpp)
+        tests/ImportEndToEndTests.cpp
+        tests/ProcessorTests.cpp
+        tests/SnapshotTests.cpp
+        tests/WavetableTests.cpp)
 
     # Link the plugin's shared-code library and inherit its JUCE settings, so
     # tests exercise exactly the code that ships in the plugin.

@@ -11,6 +11,8 @@ Wavetable-extraction synth plugin (macOS + Windows).
 | 2026-10-06 | Chords: all three approaches are user-selectable options. **(a) lock to lowest note is the default.** (b) user-chosen loop/period and (c) polyphonic note detection are both available. |
 | 2026-10-06 | GitHub repo is public. |
 | 2026-10-06 | Pinned deps: JUCE 8.0.15, Catch2 v3.16.0, pluginval v1.0.4. |
+| 2026-10-06 | Per-octave band-limited mipmaps and 4-point Hermite interpolation moved forward into M2 (imported sounds alias badly without them). |
+| 2026-10-06 | M2 imports mono-summed audio; the stereo option comes with the M3 import modes. |
 
 ---
 
